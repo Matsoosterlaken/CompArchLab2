@@ -405,7 +405,340 @@ int main(int argc, char *argv[]) {
    Begin your code here 	  			       */
 
 /***************************************************************/
+int IR = 0;
 
+
+/*
+if ((n AND N) OR (z AND Z) OR (p AND P))
+PC = PCü + LSHF(SEXT(PCoffset9), 1);
+ */
+void BR(void){
+    int BEN = (CURRENT_LATCHES.N & ((IR >> 11)) +
+            CURRENT_LATCHES.Z & ((IR >> 12)) +
+            CURRENT_LATCHES.P & ((IR >> 13)));
+    if (BEN) {
+        int PCoffset9 = IR & 0x01FF;
+        PCoffset9 = PCoffset9 << 1;
+        if (PCoffset9 & 0x0200) {
+            PCoffset9 |= 0xFC00;
+        }
+
+        CURRENT_LATCHES.PC = Low16bits(CURRENT_LATCHES.PC + PCoffset9) ;
+    }
+}
+
+
+
+/*
+ * if (bit[5] == 0)
+DR = SR1 + SR2;
+else
+DR = SR1 + SEXT(imm5);
+setcc();
+ */
+void ADD(void){
+    int DR = (IR & 0x0E00)>>9;
+    int SR1 = (IR & 0x01C0)>>6;
+    int SR2 = IR & 0x0003;
+    int imm5 = IR & 0x001F;
+
+    if (IR & 0x0020) { //immediate
+        if(imm5 & 0x0010){
+            imm5 |= 0xFFE0;
+        }
+        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] + imm5;
+
+    } else{ //from source register
+        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] + CURRENT_LATCHES.REGS[SR2];
+
+    }
+    if(CURRENT_LATCHES.REGS[DR] == 0){
+        CURRENT_LATCHES.Z = 1;
+    } else if(CURRENT_LATCHES.REGS[DR] & 0x8000){ //negative numbers will have 1 in bit 15
+        CURRENT_LATCHES.N = 1;
+    } else{
+        CURRENT_LATCHES.P = 1;
+    }
+
+
+}
+
+/*
+ DR = SEXT(mem[BaseR + SEXT(boffset6)]);
+setcc();
+ */
+void LDB(void){
+    int DR = (IR & 0x0E00)>>9;
+    int BR = (IR & 0x01C0)>>6;
+    int boffset6 = IR & 0x00F;
+
+    if(boffset6 & 0x0020){
+        boffset6 |= 0xFFC0;
+    }
+    int value = MEMORY[(CURRENT_LATCHES.REGS[BR] + boffset6)/2][(CURRENT_LATCHES.REGS[BR] + boffset6)%2];
+    if(value & 0x0080){
+        value |= 0xFF00;
+    }
+    CURRENT_LATCHES.REGS[DR] = value;
+
+    if(CURRENT_LATCHES.REGS[DR] == 0){
+        CURRENT_LATCHES.Z = 1;
+    } else if(CURRENT_LATCHES.REGS[DR] & 0x0080){ //negative bytes will have 1 in bit 7
+        CURRENT_LATCHES.N = 1;
+    } else{
+        CURRENT_LATCHES.P = 1;
+    }
+
+}
+
+
+/*
+ mem[BaseR + SEXT(boffset6)] = SR[7:0];
+ */
+void STB(void){
+    int SR = (IR & 0x0E00)>>9;
+    int BR = (IR & 0x01C0)>>6;
+    int boffset6 = IR & 0x00F;
+    if(boffset6 & 0x0020){
+        boffset6 |= 0xFFC0;
+    }
+
+    int value = (CURRENT_LATCHES.REGS[SR]) & 0x00FF;
+    MEMORY[(CURRENT_LATCHES.REGS[BR] + boffset6)/2][(CURRENT_LATCHES.REGS[BR] + boffset6)%2] = value;
+
+}
+
+
+/*
+ R7 = PCë ;
+if (bit[11] == 0)
+PC = BaseR;
+else
+PC = PCë + LSHF(SEXT(PCoffset11), 1);
+ */
+//JSR LABEL
+//JSRR BaseR
+void JSR(void){
+    int pcoffset11 = (IR & 0x07FF);
+    int BR = (IR & 0x01C0)>>6;
+    int temp = CURRENT_LATCHES.PC;
+    if(pcoffset11 & 0x0400){
+        pcoffset11 |= 0xF800;
+    }
+    if(IR & 0x0800){
+        pcoffset11 = pcoffset11 << 1;
+        CURRENT_LATCHES.PC += pcoffset11;
+    } else{
+        CURRENT_LATCHES.PC = CURRENT_LATCHES.REGS[BR];
+    }
+    CURRENT_LATCHES.REGS[7] = temp;
+
+}
+
+
+/*
+if (bit[5] == 0)
+DR = SR1 AND SR2;
+else
+DR = SR1 AND SEXT(imm5);
+setcc();
+ */
+void AND(void){
+    int DR = (IR & 0x0E00)>>9;
+    int SR1 = (IR & 0x01C0)>>6;
+    int SR2 = IR & 0x0003;
+    int imm5 = IR & 0x001F;
+    if (IR & 0x0020) { //immediate
+        if(imm5 & 0x0010){
+            imm5 |= 0xFFE0;
+        }
+        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] & imm5;
+
+    } else{ //from source register
+        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] & CURRENT_LATCHES.REGS[SR2];
+
+    }
+    if(CURRENT_LATCHES.REGS[DR] == 0){
+        CURRENT_LATCHES.Z = 1;
+    } else if(CURRENT_LATCHES.REGS[DR] & 0x8000){ //negative numbers will have 1 in bit 15
+        CURRENT_LATCHES.N = 1;
+    } else{
+        CURRENT_LATCHES.P = 1;
+    }
+
+}
+
+/*
+ DR = MEM[BaseR + LSHF(SEXT(offset6), 1)];
+setcc();
+ */
+void LDW(void){
+    int DR = (IR & 0x0E00)>>9;
+    int BR = (IR & 0x01C0)>>6;
+    int boffset6 = IR & 0x003F;
+    if(boffset6 & 0x0020){
+        boffset6 |= 0xFFC0;
+    }
+    boffset6 = boffset6 << 1; // dont need to shift by 1 if divide by two below
+
+    CURRENT_LATCHES.REGS[DR] = MEMORY[(CURRENT_LATCHES.REGS[BR] + boffset6)/2][0] + MEMORY[(CURRENT_LATCHES.REGS[BR] + boffset6)/2][1];
+
+    if(CURRENT_LATCHES.REGS[DR] == 0){
+        CURRENT_LATCHES.Z = 1;
+    } else if(CURRENT_LATCHES.REGS[DR] & 0x8000){ //negative numbers will have 1 in bit 15
+        CURRENT_LATCHES.N = 1;
+    } else{
+        CURRENT_LATCHES.P = 1;
+    }
+
+}
+
+/*
+ MEM[BaseR + LSHF(SEXT(offset6), 1)] = SR;
+ */
+void STW(void){
+    int SR = (IR & 0x0E00)>>9;
+    int BR = (IR & 0x01C0)>>6;
+    int boffset6 = IR & 0x00F;
+    if(boffset6 & 0x0020){
+        boffset6 |= 0xFFC0;
+    }
+    boffset6 = boffset6 << 1;
+    int high_value = (CURRENT_LATCHES.REGS[SR]) & 0xFF00;
+    int low_value = (CURRENT_LATCHES.REGS[SR]) & 0x00FF;
+    MEMORY[(CURRENT_LATCHES.REGS[BR] + boffset6)/2][0] = high_value;
+    MEMORY[(CURRENT_LATCHES.REGS[BR] + boffset6)/2][1] = low_value;
+
+
+}
+
+/*
+ if (PSR[15] == 1) privilege mode violation
+PC = MEM[R6]; R6 is the SSP
+R6 = R6 + 2;
+TEMP = MEM[R6];
+R6 = R6 + 2;
+PSR = TEMP; the privilege mode and condition codes of the interrupted process are restored
+ */
+void RTI(void){
+    //DO NOT HAVE TO IMPLEMENT
+
+
+
+}
+
+/*
+ if (bit[5] == 0)
+DR = SR1 XOR SR2;
+else
+DR = SR1 XOR SEXT(imm5);
+setcc();
+ */
+void XOR(void){
+    int DR = (IR & 0x0E00)>>9;
+    int SR1 = (IR & 0x01C0)>>6;
+    int SR2 = (IR & 0x0007);
+    int imm5 = (IR & 0x001F);
+    if (IR & 0x0020) {
+        if(imm5 & 0x0010){          //SEXT
+            imm5 |= 0xFFE0;
+        }
+        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] ^ imm5; //DR = SR1 XOR imm5
+
+    } else{ //from source register
+        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] ^ CURRENT_LATCHES.REGS[SR2];
+
+    }
+    if(CURRENT_LATCHES.REGS[DR] == 0){//setcc();
+        CURRENT_LATCHES.Z = 1;
+    } else if(CURRENT_LATCHES.REGS[DR] & 0x8000){ //negative numbers will have 1 in bit 15
+        CURRENT_LATCHES.N = 1;
+    } else {
+        CURRENT_LATCHES.P = 1;
+    }
+
+
+}
+
+/*
+PC = BaseR;
+ */
+void JMP(void){
+    int BaseR = (IR & 0x01C0)>>6;
+    CURRENT_LATCHES.PC = CURRENT_LATCHES.REGS[BaseR];
+
+}
+
+/*
+ if (bit[4] == 0)
+DR = LSHF(SR, amount4);
+else
+if (bit[5] == 0)
+DR = RSHF(SR, amount4, 0);
+else
+DR = RSHF(SR, amount4, SR[15]);
+setcc();
+ */
+void SHF(void){
+    int DR = (IR & 0x0E00) >> 9;
+    int SR = (IR & 0x01C0) >> 6;
+    int amount4 = (IR & 0x000F);
+    if (!(IR & 0x0010)) {
+        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR] << amount4;
+    }
+    else if (!(IR & 0x0020)) {
+        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR] >> amount4;
+    }
+    else {
+        if (CURRENT_LATCHES.REGS[SR] & 0x8000) {
+            CURRENT_LATCHES.REGS[SR] |= 0xFFFF0000;
+            CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR] >> amount4;
+            Low16bits(CURRENT_LATCHES.REGS[SR]);
+        }
+        else {
+            CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR] >> amount4;
+        }
+    }
+    Low16bits(CURRENT_LATCHES.REGS[DR]);
+    if(CURRENT_LATCHES.REGS[DR] == 0){//setcc();
+        CURRENT_LATCHES.Z = 1;
+    } else if((CURRENT_LATCHES.REGS[DR] & 0x8000)){
+        CURRENT_LATCHES.N = 1;
+    } else {
+        CURRENT_LATCHES.P = 1;
+    }
+
+
+}
+
+
+/*
+ DR = PCë + LSHF(SEXT(PCoffset9),1);
+ */
+void LEA(void){
+    int PCoffset9 = IR & 0x01FF;
+    int DR = (IR & 0x0E000) >> 9;
+    if (PCoffset9 & 0x0100) { //SEXT
+        PCoffset9 |= 0xFE00;
+    }
+    PCoffset9 = PCoffset9 << 1;
+    CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.PC + PCoffset9;
+
+
+}
+
+
+/*
+R7 = PCë ;
+PC = MEM[LSHF(ZEXT(trapvect8), 1)];
+ */
+void TRAP(void){
+    CURRENT_LATCHES.REGS[7] = CURRENT_LATCHES.PC;
+    int trapvect8 = IR & 0x00FF;
+    CURRENT_LATCHES.PC = MEMORY[trapvect8][0] + MEMORY[trapvect8][1];
+
+
+}
 
 
 void process_instruction(){
@@ -419,25 +752,74 @@ void process_instruction(){
      */
     //fetch
 
-    int IR = MEMORY[CURRENT_LATCHES.PC >> 1][0] + (MEMORY[CURRENT_LATCHES.PC >> 1][1] << 8);
+     IR = MEMORY[CURRENT_LATCHES.PC >> 1][0] + (MEMORY[CURRENT_LATCHES.PC >> 1][1] << 8);
+     CURRENT_LATCHES.PC+=2;
     printf("%d\n", IR);
     //decode
     int opCode = IR >> 12;
     switch (opCode) {
-        case 0x0 :
 
-        case 0x1 :
+        case 0x0 : //branch
+            BR();
+            break;
+        case 0x1 : // ADD
+            ADD();
+            break;
+        case 0x2 : //LDB
+            LDB();
+            break;
 
-        case 0x2 :
+        case 0x3 :  //STB
+            STB();
+            break;
 
-        case 0x3 :
+        case 0x4 :  //JSR(R)
+            JSR();
+            break;
 
-        case 0x4 :
+        case 0x5 : //AND
+            AND();
+            break;
 
-        case 0x5 :
+        case 0x6 :  //LDW
+            LDW();
+            break;
 
-        
+        case 0x7 : //STW
+            STW();
+            break;
+
+        case 0x8 : //RTI
+            RTI();
+            break;
+
+        case 0x9 : //XOR
+            XOR();
+            break;
+
+        case 0xA : //not used
+
+        case 0xB : //not used
+
+        case 0xC : //JMP
+            JMP();
+            break;
+
+        case 0xD : //SHF
+            SHF();
+            break;
+
+        case 0xE : //LEA
+            LEA();
+            break;
+
+        case 0xF : //TRAP
+            TRAP();
+            break;
+
         default:
+            break;
+
     }
 
 }
