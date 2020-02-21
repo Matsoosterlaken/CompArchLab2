@@ -413,9 +413,12 @@ if ((n AND N) OR (z AND Z) OR (p AND P))
 PC = PCü + LSHF(SEXT(PCoffset9), 1);
  */
 void BR(void){
-    int BEN = (CURRENT_LATCHES.N & ((IR >> 11)) +
-            CURRENT_LATCHES.Z & ((IR >> 12)) +
-            CURRENT_LATCHES.P & ((IR >> 13)));
+    int BEN = ((CURRENT_LATCHES.N & ((IR & 0x0800) >> 11)) |
+            (CURRENT_LATCHES.Z & ((IR & 0x0400) >> 10)) |
+            (CURRENT_LATCHES.P & ((IR & 0x0200)>> 9)));
+    printf("%x\n", (IR & 0x0800) >> 11);
+    printf("%x\n", BEN);
+
     if (BEN) {
         int PCoffset9 = IR & 0x01FF;
         PCoffset9 = PCoffset9 << 1;
@@ -423,7 +426,7 @@ void BR(void){
             PCoffset9 |= 0xFC00;
         }
 
-        CURRENT_LATCHES.PC = Low16bits(CURRENT_LATCHES.PC + PCoffset9) ;
+        NEXT_LATCHES.PC = Low16bits(NEXT_LATCHES.PC + PCoffset9) ;
     }
 }
 
@@ -446,18 +449,21 @@ void ADD(void){
         if(imm5 & 0x0010){
             imm5 |= 0xFFE0;
         }
-        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] + imm5;
+        NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] + imm5;
 
     } else{ //from source register
-        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] + CURRENT_LATCHES.REGS[SR2];
+        NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] + CURRENT_LATCHES.REGS[SR2];
 
     }
+    NEXT_LATCHES.Z = 0;
+    NEXT_LATCHES.N = 0;
+    NEXT_LATCHES.P = 0;
     if(CURRENT_LATCHES.REGS[DR] == 0){
-        CURRENT_LATCHES.Z = 1;
+        NEXT_LATCHES.Z = 1;
     } else if(CURRENT_LATCHES.REGS[DR] & 0x8000){ //negative numbers will have 1 in bit 15
-        CURRENT_LATCHES.N = 1;
+        NEXT_LATCHES.N = 1;
     } else{
-        CURRENT_LATCHES.P = 1;
+        NEXT_LATCHES.P = 1;
     }
 
 
@@ -479,14 +485,17 @@ void LDB(void){
     if(value & 0x0080){
         value |= 0xFF00;
     }
-    CURRENT_LATCHES.REGS[DR] = value;
+    NEXT_LATCHES.REGS[DR] = value;
 
+    NEXT_LATCHES.Z = 0;
+    NEXT_LATCHES.N = 0;
+    NEXT_LATCHES.P = 0;
     if(CURRENT_LATCHES.REGS[DR] == 0){
-        CURRENT_LATCHES.Z = 1;
+        NEXT_LATCHES.Z = 1;
     } else if(CURRENT_LATCHES.REGS[DR] & 0x0080){ //negative bytes will have 1 in bit 7
-        CURRENT_LATCHES.N = 1;
+        NEXT_LATCHES.N = 1;
     } else{
-        CURRENT_LATCHES.P = 1;
+        NEXT_LATCHES.P = 1;
     }
 
 }
@@ -521,17 +530,17 @@ PC = PCë + LSHF(SEXT(PCoffset11), 1);
 void JSR(void){
     int pcoffset11 = (IR & 0x07FF);
     int BR = (IR & 0x01C0)>>6;
-    int temp = CURRENT_LATCHES.PC;
+    int temp = NEXT_LATCHES.PC;
     if(pcoffset11 & 0x0400){
         pcoffset11 |= 0xF800;
     }
     if(IR & 0x0800){
         pcoffset11 = pcoffset11 << 1;
-        CURRENT_LATCHES.PC += pcoffset11;
+        NEXT_LATCHES.PC += pcoffset11;
     } else{
-        CURRENT_LATCHES.PC = CURRENT_LATCHES.REGS[BR];
+        NEXT_LATCHES.PC = CURRENT_LATCHES.REGS[BR];
     }
-    CURRENT_LATCHES.REGS[7] = temp;
+    NEXT_LATCHES.REGS[7] = temp;
 
 }
 
@@ -552,18 +561,22 @@ void AND(void){
         if(imm5 & 0x0010){
             imm5 |= 0xFFE0;
         }
-        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] & imm5;
+        NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] & imm5;
 
     } else{ //from source register
-        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] & CURRENT_LATCHES.REGS[SR2];
+        NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] & CURRENT_LATCHES.REGS[SR2];
 
     }
+
+    NEXT_LATCHES.Z = 0;
+    NEXT_LATCHES.N = 0;
+    NEXT_LATCHES.P = 0;
     if(CURRENT_LATCHES.REGS[DR] == 0){
-        CURRENT_LATCHES.Z = 1;
+        NEXT_LATCHES.Z = 1;
     } else if(CURRENT_LATCHES.REGS[DR] & 0x8000){ //negative numbers will have 1 in bit 15
-        CURRENT_LATCHES.N = 1;
+        NEXT_LATCHES.N = 1;
     } else{
-        CURRENT_LATCHES.P = 1;
+        NEXT_LATCHES.P = 1;
     }
 
 }
@@ -579,16 +592,19 @@ void LDW(void){
     if(boffset6 & 0x0020){
         boffset6 |= 0xFFC0;
     }
-    boffset6 = boffset6 << 1; // dont need to shift by 1 if divide by two below
+    //boffset6 = boffset6 << 1; // dont need to shift by 1 if divide by two below
 
-    CURRENT_LATCHES.REGS[DR] = MEMORY[(CURRENT_LATCHES.REGS[BR] + boffset6)/2][0] + MEMORY[(CURRENT_LATCHES.REGS[BR] + boffset6)/2][1];
+    NEXT_LATCHES.REGS[DR] = MEMORY[(CURRENT_LATCHES.REGS[BR]/2 + boffset6)][0] + (MEMORY[(CURRENT_LATCHES.REGS[BR]/2 + boffset6)][1] << 8);
 
+    NEXT_LATCHES.Z = 0;
+    NEXT_LATCHES.N = 0;
+    NEXT_LATCHES.P = 0;
     if(CURRENT_LATCHES.REGS[DR] == 0){
-        CURRENT_LATCHES.Z = 1;
+        NEXT_LATCHES.Z = 1;
     } else if(CURRENT_LATCHES.REGS[DR] & 0x8000){ //negative numbers will have 1 in bit 15
-        CURRENT_LATCHES.N = 1;
+        NEXT_LATCHES.N = 1;
     } else{
-        CURRENT_LATCHES.P = 1;
+        NEXT_LATCHES.P = 1;
     }
 
 }
@@ -643,18 +659,22 @@ void XOR(void){
         if(imm5 & 0x0010){          //SEXT
             imm5 |= 0xFFE0;
         }
-        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] ^ imm5; //DR = SR1 XOR imm5
+        NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] ^ imm5; //DR = SR1 XOR imm5
 
     } else{ //from source register
-        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] ^ CURRENT_LATCHES.REGS[SR2];
+        NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] ^ CURRENT_LATCHES.REGS[SR2];
 
     }
+
+    NEXT_LATCHES.Z = 0;
+    NEXT_LATCHES.N = 0;
+    NEXT_LATCHES.P = 0;
     if(CURRENT_LATCHES.REGS[DR] == 0){//setcc();
-        CURRENT_LATCHES.Z = 1;
+        NEXT_LATCHES.Z = 1;
     } else if(CURRENT_LATCHES.REGS[DR] & 0x8000){ //negative numbers will have 1 in bit 15
-        CURRENT_LATCHES.N = 1;
+        NEXT_LATCHES.N = 1;
     } else {
-        CURRENT_LATCHES.P = 1;
+        NEXT_LATCHES.P = 1;
     }
 
 
@@ -665,7 +685,7 @@ PC = BaseR;
  */
 void JMP(void){
     int BaseR = (IR & 0x01C0)>>6;
-    CURRENT_LATCHES.PC = CURRENT_LATCHES.REGS[BaseR];
+    NEXT_LATCHES.PC = CURRENT_LATCHES.REGS[BaseR];
 
 }
 
@@ -684,28 +704,31 @@ void SHF(void){
     int SR = (IR & 0x01C0) >> 6;
     int amount4 = (IR & 0x000F);
     if (!(IR & 0x0010)) {
-        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR] << amount4;
+        NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR] << amount4;
     }
     else if (!(IR & 0x0020)) {
-        CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR] >> amount4;
+        NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR] >> amount4;
     }
     else {
         if (CURRENT_LATCHES.REGS[SR] & 0x8000) {
-            CURRENT_LATCHES.REGS[SR] |= 0xFFFF0000;
-            CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR] >> amount4;
+            NEXT_LATCHES.REGS[SR] |= 0xFFFF0000;
+            NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR] >> amount4;
             Low16bits(CURRENT_LATCHES.REGS[SR]);
         }
         else {
-            CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR] >> amount4;
+            NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR] >> amount4;
         }
     }
     Low16bits(CURRENT_LATCHES.REGS[DR]);
+    NEXT_LATCHES.Z = 0;
+    NEXT_LATCHES.N = 0;
+    NEXT_LATCHES.P = 0;
     if(CURRENT_LATCHES.REGS[DR] == 0){//setcc();
-        CURRENT_LATCHES.Z = 1;
+        NEXT_LATCHES.Z = 1;
     } else if((CURRENT_LATCHES.REGS[DR] & 0x8000)){
-        CURRENT_LATCHES.N = 1;
+        NEXT_LATCHES.N = 1;
     } else {
-        CURRENT_LATCHES.P = 1;
+        NEXT_LATCHES.P = 1;
     }
 
 
@@ -717,13 +740,12 @@ void SHF(void){
  */
 void LEA(void){
     int PCoffset9 = IR & 0x01FF;
-    int DR = (IR & 0x0E000) >> 9;
+    int DR = (IR & 0x0E00) >> 9;
     if (PCoffset9 & 0x0100) { //SEXT
         PCoffset9 |= 0xFE00;
     }
     PCoffset9 = PCoffset9 << 1;
-    CURRENT_LATCHES.REGS[DR] = CURRENT_LATCHES.PC + PCoffset9;
-
+    NEXT_LATCHES.REGS[DR] = NEXT_LATCHES.PC + PCoffset9;
 
 }
 
@@ -733,9 +755,9 @@ R7 = PCë ;
 PC = MEM[LSHF(ZEXT(trapvect8), 1)];
  */
 void TRAP(void){
-    CURRENT_LATCHES.REGS[7] = CURRENT_LATCHES.PC;
+    NEXT_LATCHES.REGS[7] = NEXT_LATCHES.PC;
     int trapvect8 = IR & 0x00FF;
-    CURRENT_LATCHES.PC = MEMORY[trapvect8][0] + MEMORY[trapvect8][1];
+    NEXT_LATCHES.PC = MEMORY[trapvect8][0] + MEMORY[trapvect8][1];
 
 
 }
@@ -753,10 +775,11 @@ void process_instruction(){
     //fetch
 
      IR = MEMORY[CURRENT_LATCHES.PC >> 1][0] + (MEMORY[CURRENT_LATCHES.PC >> 1][1] << 8);
-     CURRENT_LATCHES.PC+=2;
-    printf("%d\n", IR);
+     NEXT_LATCHES.PC = CURRENT_LATCHES.PC + 2;
+    printf("%x\n", IR);
     //decode
     int opCode = IR >> 12;
+    printf("%x\n", opCode);
     switch (opCode) {
 
         case 0x0 : //branch
