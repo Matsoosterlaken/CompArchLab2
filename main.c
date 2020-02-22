@@ -4,9 +4,9 @@
     REFER TO THE SUBMISSION INSTRUCTION FOR DETAILS
 
     Name 1: Matteus Oosterlaken
-    Name 2: Full name of the second partner
+    Name 2: Emma Harper
     UTEID 1: mto436
-    UTEID 2: UT EID of the second partner
+    UTEID 2: elh2395
 */
 
 /***************************************************************/
@@ -45,6 +45,7 @@ void process_instruction() ;
 /* Use this to avoid overflowing 16 bits on the bus.           */
 /***************************************************************/
 #define Low16bits(x) ((x) & 0xFFFF)
+#define Low8bits(x) ((x) & 0x000000FF)
 
 /***************************************************************/
 /* Main memory.                                                */
@@ -406,7 +407,18 @@ int main(int argc, char *argv[]) {
 
 /***************************************************************/
 int IR = 0;
-
+void setcc(int DR) {
+    NEXT_LATCHES.Z = 0;
+    NEXT_LATCHES.N = 0;
+    NEXT_LATCHES.P = 0;
+    if(NEXT_LATCHES.REGS[DR] == 0){//setcc();
+        NEXT_LATCHES.Z = 1;
+    } else if((NEXT_LATCHES.REGS[DR] & 0x8000)){
+        NEXT_LATCHES.N = 1;
+    } else {
+        NEXT_LATCHES.P = 1;
+    }
+}
 
 /*
 if ((n AND N) OR (z AND Z) OR (p AND P))
@@ -416,14 +428,13 @@ void BR(void){
     int BEN = ((CURRENT_LATCHES.N & ((IR & 0x0800) >> 11)) |
             (CURRENT_LATCHES.Z & ((IR & 0x0400) >> 10)) |
             (CURRENT_LATCHES.P & ((IR & 0x0200)>> 9)));
-    printf("%x\n", (IR & 0x0800) >> 11);
-    printf("%x\n", BEN);
+
 
     if (BEN) {
         int PCoffset9 = IR & 0x01FF;
         PCoffset9 = PCoffset9 << 1;
         if (PCoffset9 & 0x0200) {
-            PCoffset9 |= 0xFC00;
+            PCoffset9 |= 0xFFFFFC00;
         }
 
         NEXT_LATCHES.PC = Low16bits(NEXT_LATCHES.PC + PCoffset9) ;
@@ -442,29 +453,29 @@ setcc();
 void ADD(void){
     int DR = (IR & 0x0E00)>>9;
     int SR1 = (IR & 0x01C0)>>6;
-    int SR2 = IR & 0x0003;
+    int SR2 = IR & 0x0007;
     int imm5 = IR & 0x001F;
+    SR1 = CURRENT_LATCHES.REGS[SR1];
+    if (SR1 & 0x8000) {
+        SR1 |= 0xFFFF0000;
+    }
+    SR2 = CURRENT_LATCHES.REGS[SR2];
+    if (SR2 & 0x8000) {
+        SR2 |= 0xFFFF0000;
+    }
 
     if (IR & 0x0020) { //immediate
         if(imm5 & 0x0010){
-            imm5 |= 0xFFE0;
+            imm5 |= 0xFFFFFFE0;
         }
-        NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] + imm5;
+        NEXT_LATCHES.REGS[DR] = Low16bits(SR1 + imm5);
 
     } else{ //from source register
-        NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] + CURRENT_LATCHES.REGS[SR2];
+        NEXT_LATCHES.REGS[DR] = Low16bits(SR1 + SR2);
 
     }
-    NEXT_LATCHES.Z = 0;
-    NEXT_LATCHES.N = 0;
-    NEXT_LATCHES.P = 0;
-    if(CURRENT_LATCHES.REGS[DR] == 0){
-        NEXT_LATCHES.Z = 1;
-    } else if(CURRENT_LATCHES.REGS[DR] & 0x8000){ //negative numbers will have 1 in bit 15
-        NEXT_LATCHES.N = 1;
-    } else{
-        NEXT_LATCHES.P = 1;
-    }
+
+    setcc(DR);
 
 
 }
@@ -476,27 +487,19 @@ setcc();
 void LDB(void){
     int DR = (IR & 0x0E00)>>9;
     int BR = (IR & 0x01C0)>>6;
-    int boffset6 = IR & 0x00F;
-
+    int boffset6 = IR & 0x003F;
+    int byte = boffset6%2;
     if(boffset6 & 0x0020){
-        boffset6 |= 0xFFC0;
+        boffset6 |= 0xFFFFFFC0;
+        boffset6--;
     }
-    int value = MEMORY[(CURRENT_LATCHES.REGS[BR] + boffset6)/2][(CURRENT_LATCHES.REGS[BR] + boffset6)%2];
+    int value = MEMORY[CURRENT_LATCHES.REGS[BR]/2 + boffset6/2][byte];
     if(value & 0x0080){
-        value |= 0xFF00;
+        value |= 0xFFFFFF00;
     }
-    NEXT_LATCHES.REGS[DR] = value;
+    NEXT_LATCHES.REGS[DR] = Low8bits(value);
 
-    NEXT_LATCHES.Z = 0;
-    NEXT_LATCHES.N = 0;
-    NEXT_LATCHES.P = 0;
-    if(CURRENT_LATCHES.REGS[DR] == 0){
-        NEXT_LATCHES.Z = 1;
-    } else if(CURRENT_LATCHES.REGS[DR] & 0x0080){ //negative bytes will have 1 in bit 7
-        NEXT_LATCHES.N = 1;
-    } else{
-        NEXT_LATCHES.P = 1;
-    }
+    setcc(DR);
 
 }
 
@@ -507,13 +510,15 @@ void LDB(void){
 void STB(void){
     int SR = (IR & 0x0E00)>>9;
     int BR = (IR & 0x01C0)>>6;
-    int boffset6 = IR & 0x00F;
+    int boffset6 = IR & 0x003F;
+    int byte = boffset6%2;
     if(boffset6 & 0x0020){
-        boffset6 |= 0xFFC0;
+        boffset6 |= 0xFFFFFFC0;
+        boffset6--;
     }
 
     int value = (CURRENT_LATCHES.REGS[SR]) & 0x00FF;
-    MEMORY[(CURRENT_LATCHES.REGS[BR] + boffset6)/2][(CURRENT_LATCHES.REGS[BR] + boffset6)%2] = value;
+    MEMORY[(CURRENT_LATCHES.REGS[BR])/2 + (boffset6)/2][byte] = value;
 
 }
 
@@ -532,7 +537,7 @@ void JSR(void){
     int BR = (IR & 0x01C0)>>6;
     int temp = NEXT_LATCHES.PC;
     if(pcoffset11 & 0x0400){
-        pcoffset11 |= 0xF800;
+        pcoffset11 |= 0xFFFFF800;
     }
     if(IR & 0x0800){
         pcoffset11 = pcoffset11 << 1;
@@ -555,11 +560,11 @@ setcc();
 void AND(void){
     int DR = (IR & 0x0E00)>>9;
     int SR1 = (IR & 0x01C0)>>6;
-    int SR2 = IR & 0x0003;
+    int SR2 = IR & 0x0007;
     int imm5 = IR & 0x001F;
     if (IR & 0x0020) { //immediate
         if(imm5 & 0x0010){
-            imm5 |= 0xFFE0;
+            imm5 |= 0xFFFFFFE0;
         }
         NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR1] & imm5;
 
@@ -568,16 +573,7 @@ void AND(void){
 
     }
 
-    NEXT_LATCHES.Z = 0;
-    NEXT_LATCHES.N = 0;
-    NEXT_LATCHES.P = 0;
-    if(CURRENT_LATCHES.REGS[DR] == 0){
-        NEXT_LATCHES.Z = 1;
-    } else if(CURRENT_LATCHES.REGS[DR] & 0x8000){ //negative numbers will have 1 in bit 15
-        NEXT_LATCHES.N = 1;
-    } else{
-        NEXT_LATCHES.P = 1;
-    }
+    setcc(DR);
 
 }
 
@@ -590,22 +586,13 @@ void LDW(void){
     int BR = (IR & 0x01C0)>>6;
     int boffset6 = IR & 0x003F;
     if(boffset6 & 0x0020){
-        boffset6 |= 0xFFC0;
+        boffset6 |= 0xFFFFFFC0;
     }
     //boffset6 = boffset6 << 1; // dont need to shift by 1 if divide by two below
 
     NEXT_LATCHES.REGS[DR] = MEMORY[(CURRENT_LATCHES.REGS[BR]/2 + boffset6)][0] + (MEMORY[(CURRENT_LATCHES.REGS[BR]/2 + boffset6)][1] << 8);
 
-    NEXT_LATCHES.Z = 0;
-    NEXT_LATCHES.N = 0;
-    NEXT_LATCHES.P = 0;
-    if(CURRENT_LATCHES.REGS[DR] == 0){
-        NEXT_LATCHES.Z = 1;
-    } else if(CURRENT_LATCHES.REGS[DR] & 0x8000){ //negative numbers will have 1 in bit 15
-        NEXT_LATCHES.N = 1;
-    } else{
-        NEXT_LATCHES.P = 1;
-    }
+    setcc(DR);
 
 }
 
@@ -615,15 +602,18 @@ void LDW(void){
 void STW(void){
     int SR = (IR & 0x0E00)>>9;
     int BR = (IR & 0x01C0)>>6;
-    int boffset6 = IR & 0x00F;
+    int boffset6 = IR & 0x003F;
     if(boffset6 & 0x0020){
-        boffset6 |= 0xFFC0;
+        boffset6 |= 0xFFFFFFC0;
     }
+
     boffset6 = boffset6 << 1;
+
     int high_value = (CURRENT_LATCHES.REGS[SR]) & 0xFF00;
+    high_value = high_value >> 8;
     int low_value = (CURRENT_LATCHES.REGS[SR]) & 0x00FF;
-    MEMORY[(CURRENT_LATCHES.REGS[BR] + boffset6)/2][0] = high_value;
-    MEMORY[(CURRENT_LATCHES.REGS[BR] + boffset6)/2][1] = low_value;
+    MEMORY[CURRENT_LATCHES.REGS[BR]/2 + boffset6/2][1] = high_value;
+    MEMORY[CURRENT_LATCHES.REGS[BR]/2 + boffset6/2][0] = low_value;
 
 
 }
@@ -666,16 +656,7 @@ void XOR(void){
 
     }
 
-    NEXT_LATCHES.Z = 0;
-    NEXT_LATCHES.N = 0;
-    NEXT_LATCHES.P = 0;
-    if(CURRENT_LATCHES.REGS[DR] == 0){//setcc();
-        NEXT_LATCHES.Z = 1;
-    } else if(CURRENT_LATCHES.REGS[DR] & 0x8000){ //negative numbers will have 1 in bit 15
-        NEXT_LATCHES.N = 1;
-    } else {
-        NEXT_LATCHES.P = 1;
-    }
+    setcc(DR);
 
 
 }
@@ -711,25 +692,16 @@ void SHF(void){
     }
     else {
         if (CURRENT_LATCHES.REGS[SR] & 0x8000) {
-            NEXT_LATCHES.REGS[SR] |= 0xFFFF0000;
-            NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR] >> amount4;
-            Low16bits(CURRENT_LATCHES.REGS[SR]);
+            SR = CURRENT_LATCHES.REGS[SR];
+            SR |= 0xFFFF0000;
+            NEXT_LATCHES.REGS[DR] = SR >> amount4;
         }
         else {
             NEXT_LATCHES.REGS[DR] = CURRENT_LATCHES.REGS[SR] >> amount4;
         }
     }
-    Low16bits(CURRENT_LATCHES.REGS[DR]);
-    NEXT_LATCHES.Z = 0;
-    NEXT_LATCHES.N = 0;
-    NEXT_LATCHES.P = 0;
-    if(CURRENT_LATCHES.REGS[DR] == 0){//setcc();
-        NEXT_LATCHES.Z = 1;
-    } else if((CURRENT_LATCHES.REGS[DR] & 0x8000)){
-        NEXT_LATCHES.N = 1;
-    } else {
-        NEXT_LATCHES.P = 1;
-    }
+    NEXT_LATCHES.REGS[DR] = Low16bits(NEXT_LATCHES.REGS[DR]);
+    setcc(DR);
 
 
 }
@@ -742,7 +714,7 @@ void LEA(void){
     int PCoffset9 = IR & 0x01FF;
     int DR = (IR & 0x0E00) >> 9;
     if (PCoffset9 & 0x0100) { //SEXT
-        PCoffset9 |= 0xFE00;
+        PCoffset9 |= 0xFFFFFE00;
     }
     PCoffset9 = PCoffset9 << 1;
     NEXT_LATCHES.REGS[DR] = NEXT_LATCHES.PC + PCoffset9;
@@ -776,10 +748,9 @@ void process_instruction(){
 
      IR = MEMORY[CURRENT_LATCHES.PC >> 1][0] + (MEMORY[CURRENT_LATCHES.PC >> 1][1] << 8);
      NEXT_LATCHES.PC = CURRENT_LATCHES.PC + 2;
-    printf("%x\n", IR);
+
     //decode
     int opCode = IR >> 12;
-    printf("%x\n", opCode);
     switch (opCode) {
 
         case 0x0 : //branch
